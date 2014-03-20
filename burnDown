@@ -1,0 +1,25 @@
+March 13, 2014:
+	Have name for project
+		DupRss
+	Get all images from RSS
+	Put images in images folder
+	
+March 20, 2014:
+	Grab all YouTube videos
+	put YouTube videos in folder
+
+March 27, 2014:
+	Database setup
+		SQLite
+
+April 3, 2014:
+	All information stored in database
+
+April 10, 2014:
+	Selectively store information based on what already exists in DB
+
+April 17, 2014:
+	Grab information from Database & information display
+
+April 24, 2014:
+	Information Display
