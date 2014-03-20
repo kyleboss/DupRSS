@@ -2,7 +2,8 @@
 print("Content-type: text/html")
 print
 try:
-    import cgi, cgitb, urllib, sys, os, tempfile, zipfile, HTMLParser, re, subprocess, MySQLdb, lxml
+    import cgi, cgitb, urllib, sys, os, tempfile, zipfile, HTMLParser, re
+    import subprocess, MySQLdb, lxml
 except Exception, e:
     print "ERROR"
     print e
@@ -15,6 +16,12 @@ form = cgi.FieldStorage()
 tempdir, zipFile, rssUrl, db, dbConn, userId = "", "", "", "", "", ""
 
 def connectToDB():
+    """
+        connectToDB connects to the database that stores the users, feeds, and
+        items.
+        PARAMS: NONE
+        RETURN: NONE
+    """
     global db, dbConn
     try:
         db = MySQLdb.connect(host="localhost", # your host, usually localhost
@@ -66,18 +73,23 @@ def getImgs(soup):
         RETURN: BeautifulSoup object -- the RSS Feed representation
                 with updated img links.
         """
+        #NOTE: HAS BUGS. Not all images are fetched.
         global tempDir, zipFile, rssUrl
         h = HTMLParser.HTMLParser()
         for i in soup.find_all('item'):
                 d = BeautifulSoup(h.unescape(i.description.string))
                 try:
-                    tempFile = tempfile.NamedTemporaryFile(delete=False, dir=tempDir + "/images")
+                    tempFile = tempfile.NamedTemporaryFile(\
+                                                           delete=False, \
+                                                           dir=tempDir + \
+                                                           "/images")
                     tempName = tempFile.name
                     urljoin(rssUrl, d.img['src'])
                     tempFile.write(urllib.urlopen(d.img['src']).read())
                     tempFile.close()
-                    d.img['src'] = "/images/" + os.path.basename(tempName)
-                    zipFile.write(tempName,"RSS Feed/images/" + os.path.basename(tempName))
+                    d.img['src'] = "/images/" + os.path.basename(tempName)\
+                    zipFile.write(tempName,"RSS Feed/images/" +\
+                                  os.path.basename(tempName))
                     i.description.string = str(d)
                 except Exception, e:
                         pass
@@ -90,7 +102,7 @@ def getFeed():
         return: str -- the raw RSS feed file.
         """
         global rssUrl
-        rssUrl = rssUrl.replace('www.','')
+        rssUrl = rssUrl.replace('www.','') # Remove www.
         try:
                 tryUrl = urllib.urlopen(rssUrl)
         except:
@@ -101,52 +113,95 @@ def getFeed():
         return rssFile
 
 def insertFeed():
+    """
+        insertFeed inserts the feed that corresponds to the URL input by the
+        user if it has not yet been inserted.
+        PARAMS: NONE
+        RETURN: NONE
+    """
     global rssUrl, dbConn, userId
-    sql = "SELECT Feed_id FROM Feeds_DupRSS WHERE Feed_url = %s AND Feed_user = %s"
+    
+    # Tests if a feed from this URL exists for this user. Set feedId.
+    sql = """SELECT Feed_id FROM Feeds_DupRSS WHERE Feed_url = %s AND 
+        Feed_user = %s"""
     dbConn.execute(sql, (rssUrl, userId))
     feeds = dbConn.fetchall()
     if (feeds):
         feedId = feeds[0][0]
+
     else:
+        # If feed does not exist for this user, insert one. Set feedId.
         sql = ("INSERT INTO Feeds_DupRSS(Feed_url, Feed_user) VALUES (%s, %s)")
         dbConn.execute(sql, (rssUrl, userId))
         feedId = dbConn.lastrowid
+
     db.commit()
     return feedId
 
 def insertItems(soup, feedId):
+    """
+        insertItems inserts all of the items from the feed that have yet to be
+        inserted into the database.
+        PARAMS: soup -- the RSS Feed in the form of a soup object.
+                feedId -- The ID of the feed that corresponds to the URL that 
+                the user entered.
+        RETURN: NONE
+    """
     global dbConn
     for i in soup.findAll('item'):
         try:
+
             itemContent = ''.join(i.findAll(text=True)).encode('utf-8').strip()
-            itemDate = i.find('pubDate').text
             itemTitle = i.find('title').text
+            itemDate = i.find('pubDate').text
             itemDate = parse(itemDate).strftime('%s')
-            sql = "SELECT Items_DupRSS.Item_date FROM Items_DupRSS INNER JOIN Feeds_DupRSS ON (Items_DupRSS.Item_feed = Feeds_DupRSS.Feed_id AND Feeds_DupRSS.Feed_user = %s) WHERE Items_DupRSS.Item_title = %s  AND Items_DupRSS.Item_date >= %s"
+            # Tests to see if there is a newer article with this name & under
+            # this user that already exists.
+            sql = """SELECT Items_DupRSS.Item_date FROM Items_DupRSS INNER JOIN 
+                Feeds_DupRSS ON (Items_DupRSS.Item_feed = Feeds_DupRSS.Feed_id 
+                AND Feeds_DupRSS.Feed_user = %s) WHERE 
+                Items_DupRSS.Item_title = %s  AND 
+                Items_DupRSS.Item_date >= %s"""
             dbConn.execute(sql, (userId, itemTitle, itemDate))
             feeds = dbConn.fetchall()
             if (feeds):
-                    print "PASSING"
                     pass
+
             else:
-                   sql = ("INSERT INTO Items_DupRSS(Item_title, Item_feed, Item_xml, Item_date) VALUES (%s, %s, %s, FROM_UNIXTIME(NOW()))")
-                   dbConn.execute(sql, (i.find('title').text, feedId, itemContent))
+                   # Inserts the feed item into the database.
+                   sql = """INSERT INTO Items_DupRSS(Item_title, Item_feed,
+                       Item_xml, Item_date) VALUES 
+                       (%s, %s, %s, FROM_UNIXTIME(NOW()))"""
+                   dbConn.execute(sql, (i.find('title').text,\
+                                        feedId, itemContent))
+
         except Exception, e:
             print "ERROR (insertitems): "
             print e
     db.commit()
 
 def getUser(userEmail):
+    """
+       getUser inserts the user into the database if the user does not exist.
+       It also sets the userId regardless of row existance.
+       PARAMS: userEmail -- The Email address that was put into the form.
+       RETURN: NONE
+    """
     global rssUrl, dbConn, userId
+    
+    # Check if user exists. If so, get ID
     sql = "SELECT User_id FROM Users_DupRSS WHERE User_email = %s"
     dbConn.execute(sql, (userEmail,))
     users = dbConn.fetchall()
     if (users):
         userId  = users[0][0]
     else:
+        
+        # Insert user into database if doesn't exist.
         sql = ("INSERT INTO Users_DupRSS(User_email) VALUES (%s)")
         dbConn.execute(sql, (userEmail,))
         userId = dbConn.lastrowid
+
     db.commit()
 
 
@@ -160,12 +215,13 @@ def parseFeed():
         rssFeed = getFeed()
         print rssFeed
         soup = BeautifulSoup("".join(rssFeed), features="xml")
-        #print soup
         h= HTMLParser.HTMLParser()
         finalizedRss = str(getImgs(soup))
-        #print finalizedRss
         feedId = insertFeed()
         insertItems(soup, feedId)
+
+
+        # YOUTUBE -- ignore until YouTube is fixed.
         """ytRegex = (
                 r'(https?://)?(www\.)?'
                 '(youtube|youtu|youtube-nocookie)\.?(\.com|\.be)'
@@ -191,7 +247,8 @@ def writeRss(finalRss):
         RETURN: NONE
         """
         global tempDir, zipFile
-        tempFile = tempfile.NamedTemporaryFile(delete=False, dir=tempDir, suffix='.rss')
+        tempFile = tempfile.NamedTemporaryFile(delete=False, dir=tempDir, \
+                                               suffix='.rss')
         tempFile.write(finalRss)
         tempName = tempFile.name
         tempFile.close()
@@ -225,7 +282,7 @@ def main():
                 #print
                 #zipFile = zipfile.ZipFile(tempDir + 'z', 'w')
                 finalRss = parseFeed()
-        #writeRss(finalRss)
+                #writeRss(finalRss)
                 #zipTransfer()
         else:
                 print("Content-type: text/html")
