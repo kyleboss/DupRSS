@@ -1,3 +1,4 @@
+serverDir = "http://www.kyleboss.com"
 try:
     import urllib, sys, os, HTMLParser, re, subprocess, MySQLdb, ntpath
     from dateutil.parser import parse
@@ -35,6 +36,15 @@ def connectToDB():
         dbConn = db.cursor()
     except Exception, e:
         print "Could not connect to database: " + e
+
+def makeFeedDir():
+    """
+        makeFeedDir creates the feeds directory if it does not exist
+        PARAMS: NONE
+        RETURN: NONE
+        """
+    if (not os.path.isdir(os.getcwd() + "/feeds")):
+        os.mkdir( "feeds", 0777 )
 
 def alterRssUrl():
     """
@@ -152,11 +162,14 @@ def grabImageTags(rssText):
         # in question already exists.
         if (not os.path.isfile(dirLoc + newImgLoc)):
             currImg = open(dirLoc + newImgLoc, 'w')
-            currImg.write(urllib.urlopen(origUrl).read())
+            try:
+                currImg.write(urllib.urlopen(origUrl).read())
+            except:
+                pass
             currImg.close()
 
         # Replace URL in RSS Feed
-        currImage.url.contents[0].replaceWith(localDirLoc + newImgLoc)
+        currImage.url.contents[0].replaceWith(serverDir + localDirLoc + newImgLoc)
     return rssText
 
 def insertItems(rssText, feedId):
@@ -186,13 +199,13 @@ def insertItems(rssText, feedId):
                 itemContent = currItem.encode('utf-8').strip() # Turn to str
                 
                 # Update all videos
-                itemContent = getVids(htmlParser.unescape(itemContent))
-                
+                itemContent = getVids(itemContent)
                 # Remove all XML tags that BeautifulSoup loves to add.
-                removeXMLTag = "<?xml version=\"1.0\" encoding=\"utf-8\"?>"
+                removeXMLTag = "&lt;?xml version=\"1.0\" encoding=\"utf-8\"?&gt;"
                 itemContent = itemContent.replace(removeXMLTag, "")
-                itemContent = itemContent.replace("</xml>", "")
-                
+                itemContent = itemContent.replace("&lt;/xml&gt;", "")
+                itemContent = [s for s in itemContent.splitlines() if s]
+                itemContent = os.linesep.join(itemContent)
                 # Parse item title and date.
                 itemTitle = currItem.find('title').text
                 itemDate = currItem.find('pubDate').text
@@ -225,6 +238,8 @@ def parseFeed():
         updateFeedInfo(rssText) # Updates channel information
         return True
     else:
+        if (oper == "stdRequest"):
+            parseFeed()
         return False
 
 def getVids(itemContent):
@@ -247,7 +262,7 @@ def getVids(itemContent):
            currVid = ''.join(youtubeVids[currVid])
            rand = getRand() # Vid Prefix
            vidBase = ntpath.basename(currVid)
-           newVidLoc = "/videos/" + rand + "_" + vidBase + '.flv'
+           newVidLoc = serverDir + localDirLoc + "/videos/" + rand + "_" + vidBase + '.flv'
            itemContent.replace(currVid, newVidLoc)
            
            # Open a subprocess to download videos server-side and allow program
@@ -285,7 +300,7 @@ def getImgs(itemContent):
             imgFile = open(dirLoc + newImgLoc, 'w')
             imgFile.write(urllib.urlopen(currImg['src']).read())
             imgFile.close()
-            currImg['src'] = localDirLoc + newImgLoc
+            currImg['src'] = serverDir + localDirLoc + newImgLoc
         except Exception, e:
             print "ERROR (imgs): "
             print e
@@ -306,7 +321,7 @@ def getImgs(itemContent):
             imgFile = open(dirLoc + newImgLoc, 'w')
             imgFile.write(urllib.urlopen(currImg['url']).read())
             imgFile.close()
-            currImg['url'] = localDirLoc + newImgLoc
+            currImg['url'] = serverDir + localDirLoc + newImgLoc
         except Exception, e:
             print "ERROR (imgs): "
             print e
@@ -321,7 +336,7 @@ def getImgs(itemContent):
             imgFile = open(dirLoc + newImgLoc, 'w')
             imgFile.write(urllib.urlopen(currImg['url']).read())
             imgFile.close()
-            currImg['url'] = localDirLoc + newImgLoc
+            currImg['url'] = serverDir + localDirLoc + newImgLoc
         except Exception, e:
             print "ERROR (imgs): "
             print e
@@ -340,7 +355,6 @@ def writeRss():
     dbConn.execute(sql, (feedId,))
     feeds = dbConn.fetchall()
     feedTxt = feeds[0][0]
-    
     # Select all Feed items pertaining to the URL
     sql = """SELECT Item_xml FROM Items_DupRSS WHERE Item_feed = %s"""
     dbConn.execute(sql, (feedId,))
@@ -351,10 +365,11 @@ def writeRss():
         feedTxt += theFeed[0]
     
     # Add ending tags and write to file.
-    feedTxt += "</rss>"
+    feedTxt += "</channel></rss>"
     rssFile = open(dirLoc + "/index.rss", "w")
     rssFile.write(feedTxt)
     rssFile.close()
+    print "Your feed can be found at " + serverDir + localDirLoc
 
 def itemExists(theItem):
     """
@@ -374,8 +389,8 @@ def itemExists(theItem):
     # this user that already exists.
     sql = """SELECT Items_DupRSS.Item_title FROM Items_DupRSS INNER JOIN
         Feeds_DupRSS ON Items_DupRSS.Item_feed = Feeds_DupRSS.Feed_id
-        WHERE Items_DupRSS.Item_title = %s"""
-    dbConn.execute(sql, (itemTitle,))
+        WHERE Items_DupRSS.Item_title = %s AND Items_DupRSS.Item_feed = %s"""
+    dbConn.execute(sql, (itemTitle, feedId))
     return dbConn.fetchall()
 
 def updateFeedInfo(theFeed):
@@ -429,6 +444,7 @@ def getAllFeeds():
 def main():
     global dirLoc, rssUrl
     connectToDB()
+    makeFeedDir()
     if (oper == "stdRequest"): # Standard request from the CGI
         rssUrl = sys.argv[2]
         parseFeed()
