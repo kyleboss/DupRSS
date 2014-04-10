@@ -1,4 +1,5 @@
 #!/usr/bin/python
+serverDir = "http://www.kyleboss.com"
 try:
     import cgi, cgitb, urllib, sys, os, tempfile, zipfile, HTMLParser, re
     import subprocess, MySQLdb, lxml, ntpath, copy, json
@@ -34,6 +35,15 @@ def connectToDB():
     except Exception, e:
         print "ERROR"
         print e
+
+def makeFeedDir():
+    """
+        makeFeedDir creates the feeds directory if it does not exist
+        PARAMS: NONE
+        RETURN: NONE
+    """
+    if (not os.path.isdir(os.getcwd() + "/feed")):
+        os.mkdir( "feeds", 0777 )
 
 def validateUrl():
     global form, rssUrl
@@ -79,6 +89,7 @@ def getFormHtml():
             </div>
             <div class="sep"></div><br />
             <input type="url" name='rssUrl' id = 'rssUrl' placeholder="RSS Link" noValidate autofocus required />
+            <a id="check" href="#">Check Feed</a>
             <a id="submit" href="#">Mirror Feed</a>
             </div>
             </form>
@@ -145,6 +156,7 @@ def getRand():
 
 def main():
     global dirLoc, rssUrl, localDirLoc, form
+    makeFeedDir()
     form = cgi.FieldStorage()
     isSubmitted = urlGiven()
     if (isSubmitted):
@@ -162,7 +174,7 @@ def main():
                 result['success'] = True
                 try:
                     feedId = checkFeed()
-                    result['message'] = ("Your feed can be found at: www.kyleboss.com/cgi" + localDirLoc + "/index.rss")
+                    result['message'] = ("Your feed can be found at: " + serverDir + localDirLoc + "/index.rss")
                     subprocess.Popen("/usr/bin/python " + os.getcwd() + "/copyFeed.py stdRequest " + rssUrl, bufsize=0, stdin=open("/dev/null", "r"), stdout=open("/dev/null", "w"), stderr=open("/dev/null", "w"), shell=True)
                 except Exception, e:
                     pass
@@ -283,6 +295,11 @@ def main():
                 background-repeat: no-repeat;
                 }
                 
+                #check {
+                float: right;
+                margin-bottom:10px;
+                }
+                
                 #duprssForm .inputs #submit {
                 width: 100%;
                 margin-top: 20px;
@@ -338,8 +355,11 @@ def main():
             print """
                 $(document).ready(function(){
                     var canSubmit = false
-                    $("#rssUrl").on('input paste', function(){
-                    setTimeout(function () {
+                    $("#rssUrl").on('input paste propertychange hover', checkUrl);
+                    $("#check").on('click', checkUrl);
+                    $("#submit").css('display', 'none');
+                    
+                    function checkUrl() {
                         $.ajax({
                             type: "POST",
                             url: "/DupRSS.cgi",
@@ -349,14 +369,15 @@ def main():
                                 if (response.success) {
                                     $("#rssUrl").css('background-image', "url(/check.png)")
                                     $("body").on("click", "#submit", subUrl);
+                                    $("#submit").css("display", "block");
                                 } else {
                                     $("#rssUrl").css('background-image', "url(/x.png)")
                                     $("body").off("click", "#submit", subUrl);
+                                    $("#submit").css("display", "none");
                                 }
                             }
                         });
-                        }, 100);
-                    });
+                    }
                     
                     function subUrl() {
                         $.ajax({
