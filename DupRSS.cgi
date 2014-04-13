@@ -42,7 +42,7 @@ def makeFeedDir():
         PARAMS: NONE
         RETURN: NONE
     """
-    if (not os.path.isdir(os.getcwd() + "/feed")):
+    if (not os.path.isdir(os.getcwd() + "/feeds")):
         os.mkdir( "feeds", 0777 )
 
 def validateUrl():
