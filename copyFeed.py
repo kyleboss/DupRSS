@@ -152,24 +152,39 @@ def grabImageTags(rssText):
     
     # Search all <image> tags
     for currImage in rssText.findAll('image'):
-        origUrl = currImage.url.contents[0]
-        origUrl.replaceWith(urljoin(rssUrl, unicode(origUrl)))
-        imgBase = ntpath.basename(origUrl)
-        newImgLoc = "/images/" + imgBase
-        
-        # ONLY download the image if the image DOESN'T exist.
-        # Note: No random prefix included. We want to be able to check if image
-        # in question already exists.
-        if (not os.path.isfile(dirLoc + newImgLoc)):
-            currImg = open(dirLoc + newImgLoc, 'w')
-            try:
-                currImg.write(urllib.urlopen(origUrl).read())
-            except:
-                pass
-            currImg.close()
+        try:
+            origUrl = currImage.url.contents[0]
+            origUrl.replaceWith(urljoin(rssUrl, unicode(origUrl)))
+            imgBase = ntpath.basename(origUrl)
+            newImgLoc = "/images/" + imgBase
+            
+            # ONLY download the image if the image DOESN'T exist.
+            # Note: No random prefix included. We want to be able to check if
+            # image in question already exists.
+            if (not os.path.isfile(dirLoc + newImgLoc)):
+                currImg = open(dirLoc + newImgLoc, 'w')
+                try:
+                    currImg.write(urllib.urlopen(origUrl).read())
+                except:
+                    pass
+                currImg.close()
 
-        # Replace URL in RSS Feed
-        currImage.url.contents[0].replaceWith(serverDir + localDirLoc + newImgLoc)
+            # Replace URL in RSS Feed
+            currImage.url.contents[0].replaceWith(serverDir + localDirLoc + \
+                                                  newImgLoc)
+        except:
+            try:
+                rand = getRand()
+                currImage['src'] = urljoin(rssUrl, currImage['src'])
+                imgBase = ntpath.basename(currImage['src'])
+                newImgLoc = "/images/" + rand + "_" + imgBase
+                imgFile = open(dirLoc + newImgLoc, 'w')
+                imgFile.write(urllib.urlopen(currImage['src']).read())
+                imgFile.close()
+                currImage['src'] = serverDir + localDirLoc + newImgLoc
+            except Exception, e:
+                print "ERROR (imgs): "
+                print e
     return rssText
 
 def insertItems(rssText, feedId):
@@ -289,7 +304,6 @@ def getImgs(itemContent):
     htmlParser = HTMLParser.HTMLParser()
     itemDesc = itemContent.description.encode('utf-8').strip()
     itemDesc = BeautifulSoup(htmlParser.unescape(itemDesc), features='xml')
-    
     # Fetch all <img> tags (Handled differently because its an HTML tag)
     for currImg in itemDesc.findAll('img'):
         try:
@@ -310,6 +324,28 @@ def getImgs(itemContent):
     itemDesc = itemDesc.replace("<description>", "")
     itemDesc = itemDesc.replace("</description>", "")
     itemContent.description.contents[0].replaceWith(itemDesc)
+
+    itemConTag = itemContent.encoded.encode('utf-8').strip()
+    itemConTag = BeautifulSoup(htmlParser.unescape(itemConTag), features='xml')
+    # Fetch all <img> tags (Handled differently because its an HTML tag)
+    for currImg in itemConTag.findAll('img'):
+        try:
+            rand = getRand()
+            print currImg['src']
+            currImg['src'] = urljoin(rssUrl, currImg['src'])
+            imgBase = ntpath.basename(currImg['src'])
+            newImgLoc = "/images/" + rand + "_" + imgBase
+            imgFile = open(dirLoc + newImgLoc, 'w')
+            imgFile.write(urllib.urlopen(currImg['src']).read())
+            imgFile.close()
+            currImg['src'] = serverDir + localDirLoc + newImgLoc
+        except Exception, e:
+            print "ERROR (imgs): "
+            print e
+    
+    # Update item description
+    itemConTag = htmlParser.unescape(str(itemConTag))
+    itemContent.encoded.contents[0].replaceWith(itemConTag)
 
     # Fetch all <media:thumbnail> tags
     for currImg in itemContent.findAll('thumbnail'):
