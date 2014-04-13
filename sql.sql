@@ -30,7 +30,7 @@ USE `DupRSS`;
 
 CREATE TABLE IF NOT EXISTS `Feeds_DupRSS` (
   `Feed_id` int(11) NOT NULL AUTO_INCREMENT,
-  `Feed_rssInfo` mediumtext,
+  `Feed_rssInfo` mediumtext CHARACTER SET utf8mb4 COLLATE utf8mb4_swedish_ci,
   `Feed_url` varchar(255) NOT NULL,
   `Feed_folder` varchar(255) NOT NULL,
   PRIMARY KEY (`Feed_id`)
