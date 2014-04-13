@@ -1,5 +1,9 @@
 #!/usr/bin/python
 serverDir = "http://www.kyleboss.com"
+dbHost = "localhost"
+dbUser = "root"
+dbPasswd = ""
+dbDb = "DupRss"
 try:
     import cgi, cgitb, urllib, sys, os, tempfile, zipfile, HTMLParser, re
     import subprocess, MySQLdb, lxml, ntpath, copy, json
@@ -27,10 +31,10 @@ def connectToDB():
     """
     global db, dbConn
     try:
-        db = MySQLdb.connect(host="localhost", # your host, usually localhost
-                             user="root", # your username
-                             passwd="", # your password
-                             db="DupRSS") # name of the data base
+        db = MySQLdb.connect(host = dbHost, # your host, usually localhost
+                             user = dbUser, # your username
+                             passwd = dbPasswd, # your password
+                             db = dbDb) # name of the data base
         dbConn = db.cursor()
     except Exception, e:
         print "ERROR"
