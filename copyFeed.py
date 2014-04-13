@@ -1,6 +1,6 @@
 serverDir = "http://www.kyleboss.com"
 try:
-    import urllib, sys, os, HTMLParser, re, subprocess, MySQLdb, ntpath
+    import urllib, sys, os, HTMLParser, re, subprocess, MySQLdb, ntpath, traceback
     from dateutil.parser import parse
     from bs4 import BeautifulSoup
     from hashlib import md5
@@ -235,6 +235,8 @@ def insertItems(rssText, feedId):
         except Exception, e:
             print "ERROR (insertitems): "
             print e
+            type_, value_, traceback_ = sys.exc_info()
+            print traceback.format_tb(traceback_)
 
     db.commit()
     return rssText
@@ -324,28 +326,29 @@ def getImgs(itemContent):
     itemDesc = itemDesc.replace("<description>", "")
     itemDesc = itemDesc.replace("</description>", "")
     itemContent.description.contents[0].replaceWith(itemDesc)
+    try:
+        itemConTag = itemContent.encoded.encode('utf-8').strip()
+        itemConTag = BeautifulSoup(htmlParser.unescape(itemConTag), features='xml')
+        # Fetch all <img> tags (Handled differently because its an HTML tag)
+        for currImg in itemConTag.findAll('img'):
+            try:
+                rand = getRand()
+                currImg['src'] = urljoin(rssUrl, currImg['src'])
+                imgBase = ntpath.basename(currImg['src'])
+                newImgLoc = "/images/" + rand + "_" + imgBase
+                imgFile = open(dirLoc + newImgLoc, 'w')
+                imgFile.write(urllib.urlopen(currImg['src']).read())
+                imgFile.close()
+                currImg['src'] = serverDir + localDirLoc + newImgLoc
+            except Exception, e:
+                print "ERROR (imgs): "
+                print e
 
-    itemConTag = itemContent.encoded.encode('utf-8').strip()
-    itemConTag = BeautifulSoup(htmlParser.unescape(itemConTag), features='xml')
-    # Fetch all <img> tags (Handled differently because its an HTML tag)
-    for currImg in itemConTag.findAll('img'):
-        try:
-            rand = getRand()
-            print currImg['src']
-            currImg['src'] = urljoin(rssUrl, currImg['src'])
-            imgBase = ntpath.basename(currImg['src'])
-            newImgLoc = "/images/" + rand + "_" + imgBase
-            imgFile = open(dirLoc + newImgLoc, 'w')
-            imgFile.write(urllib.urlopen(currImg['src']).read())
-            imgFile.close()
-            currImg['src'] = serverDir + localDirLoc + newImgLoc
-        except Exception, e:
-            print "ERROR (imgs): "
-            print e
-    
-    # Update item description
-    itemConTag = htmlParser.unescape(str(itemConTag))
-    itemContent.encoded.contents[0].replaceWith(itemConTag)
+        # Update item description
+        itemConTag = htmlParser.unescape(str(itemConTag))
+        itemContent.encoded.contents[0].replaceWith(itemConTag)
+    except:
+        pass
 
     # Fetch all <media:thumbnail> tags
     for currImg in itemContent.findAll('thumbnail'):
