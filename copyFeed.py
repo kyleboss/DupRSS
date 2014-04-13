@@ -1,4 +1,8 @@
 serverDir = "http://www.kyleboss.com"
+dbHost = "localhost"
+dbUser = "root"
+dbPasswd = ""
+dbDb = "DupRss"
 try:
     import urllib, sys, os, HTMLParser, re, subprocess, MySQLdb, ntpath, traceback
     from dateutil.parser import parse
@@ -29,10 +33,10 @@ def connectToDB():
     """
     global db, dbConn
     try:
-        db = MySQLdb.connect(host="localhost", # your host, usually localhost
-                             user="root", # your username
-                             passwd="", # your password
-                             db="DupRSS") # name of the data base
+        db = MySQLdb.connect(host = dbHost, # your host, usually localhost
+                             user = dbUser, # your username
+                             passwd = dbPasswd, # your password
+                             db = dbDb) # name of the data base
         dbConn = db.cursor()
     except Exception, e:
         print "Could not connect to database: " + e
