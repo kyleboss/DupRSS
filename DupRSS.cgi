@@ -1,26 +1,24 @@
 #!/usr/bin/python
-serverDir = "http://www.kyleboss.com"
-dbHost = "localhost"
-dbUser = "root"
-dbPasswd = ""
-dbDb = "DupRss"
 try:
-    import cgi, cgitb, urllib, sys, os, tempfile, zipfile, HTMLParser, re
-    import subprocess, MySQLdb, lxml, ntpath, copy, json
+    import cgi, cgitb, urllib, sys, os, HTMLParser, re, subprocess, MySQLdb
+    import ntpath, copy, json, boto
+    from globVars import *
+    from boto.s3.connection import S3Connection
+    from dateutil.parser import parse
+    from xml.etree import ElementTree as ET
+    from bs4 import BeautifulSoup
+    from hashlib import md5
+    from time import localtime
+    from urlparse import urljoin
 except Exception, e:
     print "ERROR"
     print e
-from dateutil.parser import parse
-from xml.etree import ElementTree as ET
-import lxml.html as LH
-from bs4 import BeautifulSoup
-from hashlib import md5
-from time import localtime
-from urlparse import urljoin
+
 cgitb.enable()
 
-dirLoc, rssUrl, db, dbConn, feedId, localDirLoc, form = "", "", "", "", "", "", ""
-os.umask(0000)
+rssUrl, db, dbConn, feedId, localDirLoc, form = "", "", "", "", "", ""
+s3Conn = S3Connection(s3PublicKey, s3PrivateKey)
+drBucket = s3Conn.get_bucket(s3Bucket)
 
 def connectToDB():
     """
@@ -36,21 +34,11 @@ def connectToDB():
                              passwd = dbPasswd, # your password
                              db = dbDb) # name of the data base
         dbConn = db.cursor()
-    except Exception, e:
-        print "ERROR"
-        print e
-
-def makeFeedDir():
-    """
-        makeFeedDir creates the feeds directory if it does not exist
-        PARAMS: NONE
-        RETURN: NONE
-    """
-    if (not os.path.isdir(os.getcwd() + "/feeds")):
-        os.mkdir( "feeds", 0777 )
+    except MySQLdb.IntegrityError, e:
+        print "Could not connect to database: " + e
 
 def validateUrl():
-    global form, rssUrl
+    global rssUrl
     valUrl = rssUrl
     try:
         ET.parse(urllib.urlopen(valUrl))
@@ -85,14 +73,16 @@ def getFormHtml():
         """
         formHtml = """
             <div class="container">
-            <form id='duprssForm' action='#' method='POST' novalidate autocomplete='off'>
+            <form id='duprssForm' action='#' method='POST' novalidate \
+            autocomplete='off'>
             <div class="inputs">
             <div class="header">
             <h3>DupRSS</h3>
             <p>A tool to mirror RSS Feeds</p>
             </div>
             <div class="sep"></div><br />
-            <input type="url" name='rssUrl' id = 'rssUrl' placeholder="RSS Link" noValidate autofocus required />
+            <input type="url" name='rssUrl' id = 'rssUrl' \
+            placeholder="RSS Link" noValidate autofocus required />
             <a id="check" href="#">Check Feed</a>
             <a id="submit" href="#">Mirror Feed</a>
             </div>
@@ -108,59 +98,80 @@ def checkFeed():
         PARAMS: NONE
         RETURN: NONE
     """
-    global rssUrl, dbConn, dirLoc, feedId, localDirLoc
+    global rssUrl, dbConn, feedId, localDirLoc
     
-    # Tests if a feed from this URL exists for this user. Set feedId.
-    rssUrl = rssUrl.replace('www.','') # Remove www.
     try:
-        tryUrl = urllib.urlopen(rssUrl)
+        # Tests if a feed from this URL exists for this user. Set feedId.
+        rssUrl = rssUrl.replace('www.','') # Remove www.
+        try:
+            tryUrl = urllib.urlopen(rssUrl)
+        except:
+            rssUrl = "http://" + rssUrl
+        sql = """SELECT Feed_id, Feed_folder FROM 
+            Feeds_DupRSS WHERE Feed_url = %s"""
+        dbConn.execute(sql, (rssUrl,))
+        feeds = dbConn.fetchall()
+        if (feeds):
+            return updateFoundFeed(feeds)
+        # If feed does not exist for this user, insert one. Set feedId.
+        else:
+            return insertFeed()
     except:
-        rssUrl = "http://" + rssUrl
-    sql = """SELECT Feed_id, Feed_folder FROM Feeds_DupRSS WHERE Feed_url = %s"""
-    dbConn.execute(sql, (rssUrl,))
-    feeds = dbConn.fetchall()
-    if (feeds):
-        return updateFoundFeed(feeds)
-    # If feed does not exist for this user, insert one. Set feedId.
-    else:
-        return insertFeed()
+        print "Something went wrong when checking if feed exists"
 
 def insertFeed():
-    global feedId, localDirLoc, dirLoc
-    rand = getRand()
-    sql = ("INSERT INTO Feeds_DupRSS(Feed_url, Feed_folder) VALUES (%s, %s)")
-    dbConn.execute(sql, (rssUrl, rand))
-    feedId = dbConn.lastrowid
-    localDirLoc = "/feeds/" + rand
-    dirLoc = os.getcwd() + localDirLoc
-    os.mkdir( dirLoc, 0777 )
-    os.mkdir( dirLoc + "/images/", 0777)
-    os.mkdir( dirLoc + "/videos/", 0777)
-    db.commit()
+    global feedId, localDirLoc
+    
+    try:
+        rand = getRand()
+        sql = """INSERT INTO Feeds_DupRSS(Feed_url, Feed_folder) VALUES 
+            (%s, %s)"""
+        dbConn.execute(sql, (rssUrl, rand))
+        feedId = dbConn.lastrowid
+        localDirLoc = "/feeds/" + rand
+        rssFile = drBucket.new_key(localDirLoc + '/index.rss')
+        rssFile.set_contents_from_string('NO RSS FOUND')
+        rssFile.set_acl('public-read');
+        db.commit()
+        f = open('errLog.txt','w')
+        f.write("I FINISHED INSERTING FEED") # python will convert \n to os.linesep
+        f.close() # you can omit in most cases as the destructor will call if
+    
+    except:
+        print "Something went wrong while inserting the feed"
+        f = open('errLog.txt','w')
+        f.write("Something went wrong while inserting the feed") # python will convert \n to os.linesep
+        f.close() # you can omit in most cases as the destructor will call if
     return feedId
 
 def updateFoundFeed(feeds):
-    global feedId, localDirLoc, dirLoc
+    global feedId, localDirLoc
     feedId = feeds[0][0]
     localDirLoc = "/feeds/" + feeds[0][1]
-    dirLoc = os.getcwd() + localDirLoc
-    if (os.path.isdir(dirLoc)):
-        db.commit()
-        return feedId
-    else:
-        sql = """DELETE FROM Feeds_DupRSS WHERE Feed_url = %s"""
-        dbConn.execute(sql, (rssUrl,))
-        sql = """DELETE FROM Items_DupRSS WHERE Item_feed = %s"""
-        dbConn.execute(sql, (feedId,))
-        db.commit()
+    try:
+        if (drBucket.get_key(localDirLoc + "/index.rss")):
+            db.commit()
+            return feedId
+        else:
+            sql = """DELETE FROM Feeds_DupRSS WHERE Feed_url = %s"""
+            dbConn.execute(sql, (rssUrl,))
+            sql = """DELETE FROM Items_DupRSS WHERE Item_feed = %s"""
+            dbConn.execute(sql, (feedId,))
+            db.commit()
+            insertFeed()
+            return False
+    except:
+        print "Something went wrong while updating the feed!"
+        f = open('errLog.txt','w')
+        f.write("Something went wrong while updating the feed!") # python will convert \n to os.linesep
+        f.close() # you can omit in most cases as the destructor will call if
 
 def getRand():
     return "%s" % (md5(str(localtime())).hexdigest())
 
 
 def main():
-    global dirLoc, rssUrl, localDirLoc, form
-    makeFeedDir()
+    global rssUrl, localDirLoc, form
     form = cgi.FieldStorage()
     isSubmitted = urlGiven()
     if (isSubmitted):
@@ -176,12 +187,16 @@ def main():
             if (isSubmitted == "submitted"):
                 connectToDB()
                 result['success'] = True
-                try:
-                    feedId = checkFeed()
-                    result['message'] = ("Your feed can be found at: " + serverDir + localDirLoc + "/index.rss")
-                    subprocess.Popen("/usr/bin/python " + os.getcwd() + "/copyFeed.py stdRequest " + rssUrl, bufsize=0, stdin=open("/dev/null", "r"), stdout=open("/dev/null", "w"), stderr=open("/dev/null", "w"), shell=True)
-                except Exception, e:
-                    pass
+                feedId = checkFeed()
+                cmdTxt = (sys.executable + " " + \
+                          os.path.dirname(os.path.abspath(__file__)) + \
+                          "/copyFeed.py stdRequest " + rssUrl)
+                result['message'] = ("Your feed can be found at: " + serverDir +
+                                     localDirLoc + "/index.rss")
+                subprocess.Popen(cmdTxt, bufsize=0,
+                                 stdin=open("/dev/null", "r"),
+                                 stdout=open("/dev/null", "w"),
+                                 stderr=open("/dev/null", "w"), shell=True)
         else:
             result['success'] = False
         sys.stdout.write(json.dumps(result,indent=1))
@@ -292,7 +307,6 @@ def main():
                 }
                 
                 #duprssForm .inputs input[type=url]:required:valid, input[type=url]:focus:valid {
-                background-image: url(/check.png);
                 background-position: 445 8;
                 padding-right:60px;
                 
@@ -395,6 +409,10 @@ def main():
                                 "</div>" +
                                 "<div class='sep'></div><br />" +
                                 response.message);
+                                },
+                            error: function(xhr,err, status, response)
+                            {
+                                alert("Something went wrong! See admin for details.")
                             }
                         });
                     }
