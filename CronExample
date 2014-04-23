@@ -1,0 +1,3 @@
+#Updates all feeds every 30 minutes
+*/30 * * * * /usr/bin/python /Users/kyleboss/Dropbox/DupRSS/copyFeed.py updateVids
+*/30 * * * * /usr/bin/python /Users/kyleboss/Dropbox/DupRSS/copyFeed.py updateAll
