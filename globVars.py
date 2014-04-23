@@ -1,0 +1,9 @@
+serverDir = "https://duprss.s3.amazonaws.com" # The URL of the s3 account.
+dbHost = "localhost" # The Host of the MySQL Database
+dbUser = "root" # Username of the MySQL Account
+dbPasswd = "" # Password of the MySQL Account
+dbDb = "DupRSS" # Database 
+videosDir = "/Users/kyleboss/Dropbox/DupRSS/videos" # The temporary directory where videos are temporarily stored. Must be given write access.
+s3PublicKey = "" # Public Key to s3
+s3PrivateKey = "" # Private Key to s3
+s3Bucket = "duprss" # s3 Bucket
