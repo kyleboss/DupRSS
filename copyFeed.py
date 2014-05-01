@@ -1,28 +1,24 @@
+#!/usr/bin/python
 try:
-    import urllib, sys, os, HTMLParser, re, subprocess, MySQLdb, ntpath, glob
-    import boto, urllib2, time
-    from StringIO import StringIO
+    import cgi, cgitb, urllib, sys, os, HTMLParser, re, subprocess, MySQLdb
+    import ntpath, copy, json, boto
     from globVars import *
     from boto.s3.connection import S3Connection
     from dateutil.parser import parse
+    from xml.etree import ElementTree as ET
     from bs4 import BeautifulSoup
     from hashlib import md5
     from time import localtime
     from urlparse import urljoin
-    from xml.etree import ElementTree as ET
-except:
-    print "ERROR importing modules"
+except Exception, e:
+    print "ERROR"
+    print e
 
-# Declare global variables
+cgitb.enable()
+
+rssUrl, db, dbConn, feedId, localDirLoc, form = "", "", "", "", "", ""
 s3Conn = S3Connection(s3PublicKey, s3PrivateKey)
 drBucket = s3Conn.get_bucket(s3Bucket)
-rssUrl, db, dbConn, feedId, localDirLoc = "", "", "", "", ""
-oper = sys.argv[1]
-
-# Ensure all encoding is UTF-8 by default.
-reload(sys)
-sys.setdefaultencoding('utf-8')
-
 
 def connectToDB():
     """
@@ -38,24 +34,10 @@ def connectToDB():
                              passwd = dbPasswd, # your password
                              db = dbDb) # name of the data base
         dbConn = db.cursor()
-        return True
-    except Exception, e:
-        print "Could not connect to database"
-        try:
-            print e
-        except:
-            raise e
-        return False
+    except MySQLdb.IntegrityError, e:
+        print "Could not connect to database: " + e
 
-
-def alterRssUrl():
-    """
-        alterRssUrl will format the URL until the urllib library can access it.
-        For universality, www. is removed and http:// is added if first try
-        does not succeed.
-        PARAMS: NONE
-        RETURN: NONE
-    """
+def validateUrl():
     global rssUrl
     valUrl = rssUrl
     try:
@@ -66,71 +48,80 @@ def alterRssUrl():
             ET.parse(urllib.urlopen(valUrl))
         except:
             return False
-    rssUrl = valUrl
     return True
 
-def getFeed():
-    """
-        getFeed formats and opens the RSS feed.
+def urlGiven():
+        """
+        urlGiven determines if the user has submitted the form
+        and is waiting for a file to be parsed.
         PARAMS: NONE
-        return: str -- the raw RSS feed file.
-    """
-    global rssUrl
-    if (alterRssUrl()):
-        tryUrl = urllib.urlopen(rssUrl)
-        rssFile = tryUrl.read() # Point to contents of feed.
-        tryUrl.close()
-        return rssFile
-    else:
-        return False
+        RETURN: BOOL -- True if user is waiting for RSS file
+                False otherwise
+        """
+        submitted = form.getvalue('submitted')
+        try:
+                return submitted
+        except:
+                return False
+
+
+def getFormHtml():
+        """
+        getFormHtml outputs HTML for the form
+        PARAMS: NONE
+        RETURN: The HTML for the form
+        """
+        formHtml = """
+            <div class="container">
+            <form id='duprssForm' action='#' method='POST' novalidate \
+            autocomplete='off'>
+            <div class="inputs">
+            <div class="header">
+            <h3>DupRSS</h3>
+            <p>A tool to mirror RSS Feeds</p>
+            </div>
+            <div class="sep"></div><br />
+            <input type="url" name='rssUrl' id = 'rssUrl' \
+            placeholder="RSS Link" noValidate autofocus required />
+            <a id="check" href="#">Check Feed</a>
+            <a id="submit" href="#">Mirror Feed</a>
+            </div>
+            </form>
+            </div>
+            """
+        return formHtml
 
 def checkFeed():
-    """
-        checkFeed determines if the feed entered already exists in the database.
-        If so, it simply updates the database. It not, it updates the database
-        as well as the server's filesystem.
-        PARAMS: NONE
-        RETURN: BOOL: If the feed exists on the server and successfully inserted
-    """
-    global rssUrl, dbConn, feedId, localDirLoc
-    
-    # Get all feeds
-    try:
-        if (alterRssUrl()):
-            sql = """SELECT Feed_id, Feed_folder FROM Feeds_DupRSS WHERE Feed_url =
-                %s"""
-            dbConn.execute(sql, (rssUrl,))
-            feeds = dbConn.fetchall()
-            # Tests if a feed from this URL exists for this user. Set feedId.
-            if (feeds):
-                feedId = feeds[0][0]
-                localDirLoc = "/feeds/" + feeds[0][1]
-                feedExists = FeedExistsLocally()
-                return feedExists
-        else:
-                return -1
-    except Exception, e:
-        print "Something went wrong while checking if the feed exists!"
-        try:
-            print e
-        except:
-            raise e
-        return -1
-    
-    # If feed does not exist for this user, insert one. Set feedId.
-    else:
-        if (oper == "stdRequest"):
-            insertFeed()
-            return True
-
-def insertFeed():
     """
         insertFeed inserts the feed that corresponds to the URL input by the
         user if it has not yet been inserted.
         PARAMS: NONE
         RETURN: NONE
     """
-    global feedId, localDirLoc, rssUrl
+    global rssUrl, dbConn, feedId, localDirLoc
+    
+    try:
+        # Tests if a feed from this URL exists for this user. Set feedId.
+        rssUrl = rssUrl.replace('www.','') # Remove www.
+        try:
+            tryUrl = urllib.urlopen(rssUrl)
+        except:
+            rssUrl = "http://" + rssUrl
+        sql = """SELECT Feed_id, Feed_folder FROM 
+            Feeds_DupRSS WHERE Feed_url = %s"""
+        dbConn.execute(sql, (rssUrl,))
+        feeds = dbConn.fetchall()
+        if (feeds):
+            return updateFoundFeed(feeds)
+        # If feed does not exist for this user, insert one. Set feedId.
+        else:
+            return insertFeed()
+    except:
+        print "Something went wrong when checking if feed exists"
+
+def insertFeed():
+    global feedId, localDirLoc
+    
     try:
         rand = getRand()
         sql = """INSERT INTO Feeds_DupRSS(Feed_url, Feed_folder) VALUES 
@@ -138,450 +129,308 @@ def insertFeed():
         dbConn.execute(sql, (rssUrl, rand))
         feedId = dbConn.lastrowid
         localDirLoc = "/feeds/" + rand
+        rssFile = drBucket.new_key(localDirLoc + '/index.rss')
+        rssFile.set_contents_from_string('NO RSS FOUND')
+        rssFile.set_acl('public-read');
         db.commit()
-    except Exception, e:
-        print "There was an error while inserting the Feed"
-        try:
-            print e
-        except:
-            raise e
-
-def FeedExistsLocally():
-    """
-        FeedExistsLocally determines if the feed exists on the server. If it
-        doesn't, it deletes all reminants from the database.
-        PARAMS: NONE
-        RETURN: BOOL: True if the feed exists in the server filesystem.
-    """
-    global rssUrl, feedId
-    if (not drBucket.get_key(localDirLoc + "/index.rss")):
-        sql = """DELETE FROM Feeds_DupRSS WHERE Feed_url = %s"""
-        dbConn.execute(sql, (rssUrl,))
-        sql = """DELETE FROM Items_DupRSS WHERE Item_feed = %s"""
-        dbConn.execute(sql, (feedId,))
-        db.commit()
-        return False
-    else:
-        return True
-
-def grabImageTags(rssText):
-    """
-        grabImageTags downloads all images placed in <image> tags & updates
-        the respective URLs.
-        PARAMS: rssText -- the BeautifulSoup representation of the feed.
-        RETURN: Updated BeautifulSoup representation of the feed.
-    """
+        f = open('errLog.txt','w')
+        f.write("I FINISHED INSERTING FEED") # python will convert \n to os.linesep
+        f.close() # you can omit in most cases as the destructor will call if
     
-    # Search all <image> tags
-    for currImage in rssText.findAll('image'):
-        try:
-            origUrl = currImage.url.contents[0]
-            origUrl.replaceWith(urljoin(rssUrl, unicode(origUrl)))
-            imgBase = re.sub(r'[^a-zA-Z0-9\.]', '', ntpath.basename(origUrl))
-            newImgLoc = "/images/" + imgBase
-            
-            # ONLY download the image if the image DOESN'T exist.
-            # Note: No random prefix included. We want to be able to check if
-            # image in question already exists.
-            if (not drBucket.get_key(localDirLoc + newImgLoc)):
-                currImg = drBucket.new_key(localDirLoc + newImgLoc);
-                try:
-                    fp = StringIO(urllib2.urlopen(origUrl).read())
-                    currImg.set_contents_from_file(fp)
-                    currImg.set_acl('public-read')
-                except Exception, e:
-                    print "problem getting image"
-                    try:
-                        print e
-                    except:
-                        raise e
-            # Replace URL in RSS Feed
-            currImage.url.contents[0].replaceWith(serverDir + localDirLoc + \
-                                                  newImgLoc)
-        except:
-            try:
-                rand = getRand()
-                currImage['src'] = urljoin(rssUrl, currImage['src'])
-                imgBase = re.sub(r'[^a-zA-Z0-9\.]', '', ntpath.basename(currImage['src']))
-                newImgLoc = "/images/" + rand + "_" + imgBase
-                imgFile = drBucket.new_key(localDirLoc + newImgLoc)
-                try:
-                    fp = StringIO(urllib2.urlopen(currImage['src']).read())
-                    imgFile.set_contents_from_file(fp)
-                    imgFile.set_acl('public-read')
-                except Exception, e:
-                    print "PROBLEM retrieving image"
-                    try:
-                        print e
-                    except:
-                        raise e
-                    pass
-                currImage['src'] = serverDir + localDirLoc + newImgLoc
-            except:
-                pass
-    return rssText
-
-def insertItems(rssText, feedId):
-    """
-        insertItems inserts all of the items from the feed that have yet to be
-        inserted into the database.
-        PARAMS: rssText -- the RSS Feed in the form of a soup object.
-        feedId -- The ID of the feed that corresponds to the URL that
-        the user entered.
-        RETURN: NONE
-    """
-    global dbConn, localDirLoc
-    rssText = grabImageTags(rssText) # Take care of <image> tags
-    htmlParser = HTMLParser.HTMLParser() # For unescaping
-    
-    # Parse through every RSS Item in the feed.
-    for currItem in rssText.findAll('item'):
-        try:
-            # If we haven't already recorded the feed, insert it into the
-            # database.
-            if (len(itemExists(currItem)) == 0):
-                # Update all <img> tags, thumbnails, etc.
-                itemContent = getImgs(currItem)
-                itemContent = currItem.encode('utf-8').strip() # Turn to str
-                # Update all videos
-                itemContent = getVids(itemContent)
-                # Remove all XML tags that BeautifulSoup loves to add.
-                removeTag = "&lt;?xml version=\"1.0\" encoding=\"utf-8\"?&gt;"
-                itemContent = itemContent.replace(removeTag, "")
-                itemContent = itemContent.replace("&lt;/xml&gt;", "")
-                itemContent = [s for s in itemContent.splitlines() if s]
-                itemContent = os.linesep.join(itemContent)
-                # Parse item title and date.
-                itemTitle = currItem.title.text
-                try:
-                    itemDate = currItem.pubDate.text
-                except:
-                    itemDate = time.strftime("%a, %d %b %Y %H:%M:%S %z")
-                itemDate = parse(itemDate).strftime('%s')
-                
-                # Inserts the feed item into the database.
-                sql = """INSERT INTO Items_DupRSS(Item_title, Item_feed,
-                    Item_xml, Item_date) VALUES
-                    (%s, %s, %s, FROM_UNIXTIME(%s))"""
-                dbConn.execute(sql, (itemTitle, feedId, itemContent, itemDate))
-        except Exception, e:
-            print "ERROR (insertitems): "
-            try:
-                print e
-            except:
-                raise e
-    db.commit()
-    return rssText
-
-def parseFeed():
-    """
-        parseFeed parses the feed file.
-        PARAMS: NONE
-        RETURN: str -- parsed feed file.
-    """
-    global rssUrl, feedId
-    checkFeedResult = checkFeed()
-    if (checkFeedResult > 0):
-        rssFeed = getFeed()
-        if (rssFeed):
-            rssTextPre = BeautifulSoup("".join(rssFeed), features="xml")
-            rssText = insertItems(rssTextPre, feedId) # Insert items into database.
-            updateFeedInfo(rssText) # Updates channel information
-        else:
-            return False
-    else:
-        if (oper == "stdRequest" and checkFeedResult != -1):
-            parseFeed()
-        else:
-            return False
-    return True
-
-def updateVids():
-    allVideos = glob.glob(videosDir + "/*.mp4")
-    
-    for currVid in allVideos:
-        print "transferring: " + currVid
-        currKey = drBucket.new_key("/videos/" + re.sub(r'[^a-zA-Z0-9\.]', '', ntpath.basename(currVid)))
-        currKey.set_contents_from_filename(currVid)
-        currKey.set_acl('public-read')
-        os.remove(currVid)
-
-
-def getVids(itemContent):
-    """
-        getVids finds all the youtube videos, downloads them, and replaces
-        absolute URLS with relative ones to the local copy.
-        PARAMS: itemContent -- The feed item in BeautifulSoup form
-        RETURN: The updated feed item in BeautifulSoup form
-    """
-    # YouTube URL patterns
-    ytRegex = (
-               r'(https?://)?(www\.)?'
-               '(youtube|youtu|youtube-nocookie)\.?(\.com|\.be)'
-               '(/watch\?v=|embed/|v/|.+\?v=)?([^&=%\?]{11})')
-    youtubeVids = re.findall(ytRegex.decode(), str(itemContent))
-    
-    # Download all videos.
-    for currVid in range(0, len(youtubeVids)):
-       currVid = ''.join(youtubeVids[currVid])
-       vidBase = ntpath.basename(currVid)
-       vidBase = re.sub(r'[^a-zA-Z0-9\.]', '', vidBase)
-       newVidLoc = vidBase + '.mp4'
-       newVidAbs = serverDir + "/videos/" + newVidLoc
-       #newVidHTML = ("<video width='320' height='240' controls>" + \
-       #"<source src='" + newVidAbs + "' type='video/mp4'>" + \
-       #"Your browser does not support the video tag." + \
-       #"</video>")
-       itemContent = itemContent.replace(currVid, newVidAbs)
-       
-       # Open a subprocess to download videos server-side and allow program
-       # to move on.
-       if (not drBucket.get_key("/videos/" + newVidLoc)):
-           subprocess.Popen("/usr/local/bin/youtube-dl -f 18/22 -o " + videosDir + "/" +
-                            newVidLoc + " --quiet "
-                            + currVid, bufsize=0,
-                            stdin=open("/dev/null", "r"),
-                            stdout=open("/dev/null", "w"),
-                            stderr=open("/dev/null", "w"), shell=True)
-    if (len(youtubeVids) > 0):
-        subprocess.Popen("sleep 180; " + sys.executable + " " +
-                            os.path.realpath(__file__) + " updateVids",
-                            bufsize=0, stdin=open("/dev/null", "r"),
-                            stdout=open("/dev/null", "w"),
-                            stderr=open("errLog.txt", "w"), shell=True)
-    return itemContent
-
-def getImgs(itemContent):
-    """
-        getImgs Takes all of the images from the item's XML, downloads them,
-        and then replaces their absolute URL with a relative one pointing to the
-        new image.
-        PARAMS: itemContent -- Item XML as a soup object.
-        RETURN: encoded string of XML with new img URLs replaced.
-    """
-    htmlParser = HTMLParser.HTMLParser()
-    itemDesc = itemContent.description.encode('utf-8').strip()
-    itemDesc = BeautifulSoup(htmlParser.unescape(itemDesc), features='xml')
-    # Fetch all <img> tags (Handled differently because its an HTML tag)
-    if (itemContent.description.content):
-        for currImg in itemDesc.findAll('img'):
-            try:
-                rand = getRand()
-                currImg['src'] = urljoin(rssUrl, currImg['src'])
-                imgBase = re.sub(r'[^a-zA-Z0-9\.]', '', ntpath.basename(currImg['src']))
-                newImgLoc = "/images/" + rand + "_" + imgBase
-                imgFile = drBucket.new_key(localDirLoc + newImgLoc)
-                try:
-                    fp = StringIO(urllib2.urlopen(currImg['src']).read())
-                    imgFile.set_contents_from_file(fp)
-                    imgFile.set_acl('public-read')
-                except:
-                    pass
-                currImg['src'] = serverDir + localDirLoc + newImgLoc
-            except Exception, e:
-                print "ERROR (imgs)"
-                try:
-                    print e
-                except:
-                    raise e
-        # Update item description
-        itemDesc = htmlParser.unescape(str(itemDesc))
-        itemDesc = itemDesc.replace("<description>", "")
-        itemDesc = itemDesc.replace("</description>", "")
-        itemContent.description.contents[0].replaceWith(itemDesc)
-
-    try:
-        itemConTag = itemContent.encoded.encode('utf-8').strip()
-        itemConTag = BeautifulSoup(htmlParser.unescape(itemConTag),
-                                   features='xml')
-        # Fetch all <img> tags (Handled differently because its an HTML tag)
-        for currImg in itemConTag.findAll('img'):
-            try:
-                rand = getRand()
-                currImg['src'] = urljoin(rssUrl, currImg['src'])
-                imgBase = re.sub(r'[^a-zA-Z0-9\.]', '', ntpath.basename(currImg['src']))
-                newImgLoc = "/images/" + rand + "_" + imgBase
-                imgFile = drBucket.new_key(localDirLoc + newImgLoc)
-                try:
-                    fp = StringIO(urllib2.urlopen(currImg['src']).read())
-                    imgFile.set_contents_from_file(fp)
-                    imgFile.set_acl('public-read')
-                except:
-                    pass
-                currImg['src'] = serverDir + localDirLoc + newImgLoc
-            except Exception, e:
-                print "ERROR (imgs)"
-                try:
-                    print e
-                except:
-                    raise e
-
-        # Update item description
-        itemConTag = htmlParser.unescape(str(itemConTag))
-        itemConTag = itemDesc.replace("&lt;encoded&gt;", "")
-        itemConTag = itemDesc.replace("&lt;/encoded&gt;", "")
-        itemContent.encoded.contents[0].replaceWith(itemConTag)
     except:
-        pass
+        print "Something went wrong while inserting the feed"
+        f = open('errLog.txt','w')
+        f.write("Something went wrong while inserting the feed") # python will convert \n to os.linesep
+        f.close() # you can omit in most cases as the destructor will call if
+    return feedId
 
-    # Fetch all <media:thumbnail> tags
-    for currImg in itemContent.findAll('thumbnail'):
-        try:
-            rand = getRand()
-            currImg['url'] = urljoin(rssUrl, currImg['url'])
-            imgBase = re.sub(r'[^a-zA-Z0-9\.]', '', ntpath.basename(currImg['url']))
-            newImgLoc = "/images/" + rand + "_" + imgBase
-            imgFile = drBucket.new_key(localDirLoc + newImgLoc)
-            try:
-                fp = StringIO(urllib2.urlopen(currImg['url']).read())
-                imgFile.set_contents_from_file(fp)
-                imgFile.set_acl('public-read')
-            except:
-                pass
-            currImg['url'] = serverDir + localDirLoc + newImgLoc
-        except Exception, e:
-            print "ERROR (thumbnail imgs)"
-            try:
-                print e
-            except:
-                raise e
-
-    # Fetch all <enclose> tags
-    for currImg in itemContent.findAll('enclose'):
-        try:
-            rand = getRand()
-            currImg['url'] = urljoin(rssUrl, currImg['url'])
-            imgBase = re.sub(r'[^a-zA-Z0-9\.]', '', ntpath.basename(currImg['url']))
-            newImgLoc = "/images/" + rand + "_" + imgBase
-            imgFile = drBucket.new_key(localDirLoc + newImgLoc)
-            try:
-                fp = StringIO(urllib2.urlopen(currImg['url']).read())
-                imgFile.set_contents_from_file(fp)
-                imgFile.set_acl('public-read')
-            except:
-                pass
-            currImg['url'] = serverDir + localDirLoc + newImgLoc
-        except Exception, e:
-            print "ERROR (enclose imgs)"
-            try:
-                print e
-            except:
-                raise e
-    return itemContent
-
-def writeRss():
-    """
-        writeRSS writes the parsed RSS feed to the zip file.
-        PARAMS: finalRss -- the parsed RSS feed
-        RETURN: NONE
-    """
-    global feedId
-    
-    # Obtain the feed from database
-    sql = """SELECT Feed_rssInfo FROM Feeds_DupRSS WHERE Feed_id = %s"""
-    dbConn.execute(sql, (feedId,))
-    feeds = dbConn.fetchall()
-    feedTxt = str(feeds[0][0])
-    # Select all Feed items pertaining to the URL
-    sql = """SELECT Item_xml FROM Items_DupRSS WHERE Item_feed = %s ORDER BY item_date DESC"""
-    dbConn.execute(sql, (feedId,))
-    feeds = dbConn.fetchall()
-    
-    # Append feed items one by one.
-    for theFeed in feeds:
-        feedTxt += theFeed[0]
-    
-    # Add ending tags and write to file.
-    feedTxt += "</channel></rss>"
-    rssFile = drBucket.new_key(localDirLoc + '/index.rss')
-    rssFile.set_contents_from_string(feedTxt)
-    rssFile.set_acl('public-read');
-    print "Your feed can be found at " + serverDir + localDirLoc + "/index.rss"
-
-def itemExists(theItem):
-    """
-        itemExists determines if the item has already been inserted into the
-        database.
-        PARAMS: theItem -- BeautifulSoup XML object containing the feed item.
-        RETURN: A list of all the feeds with the same title from the same feed
-                as the current item.
-    """
-    
-    # Format item title & date
-    itemTitle = theItem.title.text
-    # Tests to see if there is already an article with this name & under
-    # this user that already exists.
-    sql = """SELECT Items_DupRSS.Item_title FROM Items_DupRSS INNER JOIN
-        Feeds_DupRSS ON Items_DupRSS.Item_feed = Feeds_DupRSS.Feed_id
-        WHERE Items_DupRSS.Item_title = %s AND Items_DupRSS.Item_feed = %s"""
-    dbConn.execute(sql, (itemTitle, feedId))
-    return dbConn.fetchall()
-
-def updateFeedInfo(theFeed):
-    """
-        updateFeedInfo extracts only the channel information from the feed
-        and updates the feed row with it.
-        PARAMS: soup -- the soup element of the feed.
-        RETURN: NONE
-    """
-    
-    # Remove all contents EXCEPT the channel tags.
-    for dItem in theFeed.findAll('item'):
-        dItem.replaceWith('')
-    htmlParser = HTMLParser.HTMLParser()
-    channel = htmlParser.unescape(theFeed.encode('utf-8').strip())
-    channel = channel.replace("<?xml version=\"1.0\" encoding=\"utf-8\"?>", "")
-    channel = channel.replace("</channel>", "")
-    channel = channel.replace("</rss>", "")
-    channel = channel.strip()
-    # Insert channel tags into the database.
-    sql = """UPDATE Feeds_DupRSS SET Feed_rssInfo=%s WHERE Feed_url = %s"""
-    dbConn.execute(sql, (channel, rssUrl))
-    db.commit()
+def updateFoundFeed(feeds):
+    global feedId, localDirLoc
+    feedId = feeds[0][0]
+    localDirLoc = "/feeds/" + feeds[0][1]
+    try:
+        if (drBucket.get_key(localDirLoc + "/index.rss")):
+            db.commit()
+            return feedId
+        else:
+            sql = """DELETE FROM Feeds_DupRSS WHERE Feed_url = %s"""
+            dbConn.execute(sql, (rssUrl,))
+            sql = """DELETE FROM Items_DupRSS WHERE Item_feed = %s"""
+            dbConn.execute(sql, (feedId,))
+            db.commit()
+            insertFeed()
+            return False
+    except:
+        print "Something went wrong while updating the feed!"
+        f = open('errLog.txt','w')
+        f.write("Something went wrong while updating the feed!") # python will convert \n to os.linesep
+        f.close() # you can omit in most cases as the destructor will call if
 
 def getRand():
-    """
-        getRand simply generates a pseudorandom string.
-        PARAMS: NONE
-        RETURN: a pseudorandom string.
-    """
     return "%s" % (md5(str(localtime())).hexdigest())
 
-def getAllFeeds():
-    """
-        updateAllFeeds takes all of the feeds currently in the database and
-        updates their items.
-    """
-    global rssUrl
-    
-    # Get all feeds in database.
-    sql = "SELECT Feed_url FROM Feeds_DupRSS"
-    dbConn.execute(sql)
-    feeds = dbConn.fetchall()
-    
-    # Update each feed one by one.
-    for currFeed in feeds:
-        rssUrl = currFeed[0]
-        print "Updating: " + rssUrl
-        subprocess.Popen(sys.executable + " " + os.path.realpath(__file__) +
-                         " stdRequest " + rssUrl, bufsize=0,
-                         stdin=open("/dev/null", "r"),
-                         stdout=open("/dev/null", "w"),
-                         stderr=open("errLog.txt", "w"), shell=True)
-        #if(parseFeed()):
-        #writeRss()
 
 def main():
-    global rssUrl
-    if (connectToDB()):
-        if (oper == "stdRequest"): # Standard request from the CGI
-            rssUrl = sys.argv[2]
-            if(parseFeed()):
-                writeRss()
-            else:
-                print "Feed URL invalid."
-        if (oper == "updateAll"): # Updates ALL of the RSS feeds in database
-            getAllFeeds()
-        if (oper == "updateVids"):
-            updateVids()
+    global rssUrl, localDirLoc, form
+    form = cgi.FieldStorage()
+    isSubmitted = urlGiven()
+    if (isSubmitted):
+        sys.stdout.write("Content-Type: application/json")
+        sys.stdout.write("\n")
+        sys.stdout.write("\n")
+        rssUrl = form.getvalue('rssUrl')
+        result = { }
+        result['message'] = ""
+        isValid = validateUrl();
+        if (isValid):
+            result['success'] = True
+            if (isSubmitted == "submitted"):
+                connectToDB()
+                result['success'] = True
+                feedId = checkFeed()
+                cmdTxt = (sys.executable + " " + \
+                          os.path.dirname(os.path.abspath(__file__)) + \
+                          "/copyFeed.py stdRequest " + rssUrl)
+                result['message'] = ("Your feed can be found at: " + serverDir +
+                                     localDirLoc + "/index.rss")
+                subprocess.Popen(cmdTxt, bufsize=0,
+                                 stdin=open("/dev/null", "r"),
+                                 stdout=open("/dev/null", "w"),
+                                 stderr=open("/dev/null", "w"), shell=True)
+        else:
+            result['success'] = False
+        sys.stdout.write(json.dumps(result,indent=1))
+        sys.stdout.write("\n")
+        sys.stdout.close()
+    else:
+            print("Content-type: text/html")
+            print
+            print "<html>"
+            print "<head>"
+            print "<title>DupRSS</title>"
+            print "<style>"
+            print """body {
+                background-color: lightgrey;
+                font-family: "Helvetica Neue", Helvetica, Arial;
+                padding-top: 20px;
+                }
+                
+                .container {
+                width: 500px;
+                margin: 0 auto;
+                margin-left:30%;
+                }
+                
+                #duprssForm {
+                padding: 0px 25px 25px;
+                background: #fff;
+                box-shadow:
+                0px 0px 0px 5px rgba( 255,255,255,0.4 ),
+                0px 4px 20px rgba( 0,0,0,0.33 );
+                -moz-border-radius: 5px;
+                -webkit-border-radius: 5px;
+                border-radius: 5px;
+                display: table;
+                position: static;
+                }
+                
+                #duprssForm .header {
+                margin-bottom: 20px;
+                }
+                
+                #duprssForm .header h3 {
+                color: #333333;
+                font-size: 24px;
+                font-weight: bold;
+                margin-bottom: 5px;
+                }
+                
+                #duprssForm .header p {
+                color: #8f8f8f;
+                font-size: 14px;
+                font-weight: 300;
+                }
+                
+                #duprssForm .sep {
+                height: 1px;
+                background: #e8e8e8;
+                width: 500px;
+                margin: 0px -25px;
+                }
+                
+                #duprssForm .inputs {
+                margin-top: 25px;
+                }
+                
+                #duprssForm .inputs label {
+                color: #8f8f8f;
+                font-size: 12px;
+                font-weight: 300;
+                letter-spacing: 1px;
+                margin-bottom: 7px;
+                display: block;
+                }
+                
+                input::-webkit-input-placeholder {
+                color:    #b5b5b5;
+                }
+                
+                input:-moz-placeholder {
+                color:    #b5b5b5;
+                }
+                
+                #duprssForm .inputs input[type=url] {
+                background: #f5f5f5;
+                font-size: 2rem;
+                -moz-border-radius: 3px;
+                -webkit-border-radius: 3px;
+                border-radius: 3px;
+                border: none;
+                padding: 13px 10px;
+                width: 500px;
+                margin-bottom: 20px;
+                box-shadow: inset 0px 2px 3px rgba( 0,0,0,0.1 );
+                clear: both;
+                }
+                
+                #duprssForm .inputs input[type=url]:focus {
+                background: #fff;
+                box-shadow: 0px 0px 0px 3px #fff38e, inset 0px 2px 3px rgba( 0,0,0,0.2 ), 0px 5px 5px rgba( 0,0,0,0.15 );
+                outline: none;
+                }
+                
+                #duprssForm .inputs input[type=url]:required:invalid, input[type=url]:focus:invalid {
+                    background-image: url(/x.png);
+                    background-position: 445px 8px;
+                    background-repeat: no-repeat;
+                    padding-right:60px;
+                }
+                
+                #duprssForm .inputs input[type=url]:required:valid, input[type=url]:focus:valid {
+                background-position: 445 8;
+                padding-right:60px;
+                
+                background-repeat: no-repeat;
+                }
+                
+                #check {
+                float: right;
+                margin-bottom:10px;
+                }
+                
+                #duprssForm .inputs #submit {
+                width: 100%;
+                margin-top: 20px;
+                padding: 15px 0;
+                color: #fff;
+                font-size: 14px;
+                font-weight: 500;
+                letter-spacing: 1px;
+                text-align: center;
+                text-decoration: none;
+                background: -moz-linear-gradient(
+                top,
+                #b9c5dd 0%,
+                #a4b0cb);
+                background: -webkit-gradient(
+                linear, left top, left bottom, 
+                from(#b9c5dd),
+                to(#a4b0cb));
+                -moz-border-radius: 5px;
+                -webkit-border-radius: 5px;
+                border-radius: 5px;
+                border: 1px solid #737b8d;
+                -moz-box-shadow:
+                0px 5px 5px rgba(000,000,000,0.1),
+                inset 0px 1px 0px rgba(255,255,255,0.5);
+                -webkit-box-shadow:
+                0px 5px 5px rgba(000,000,000,0.1),
+                inset 0px 1px 0px rgba(255,255,255,0.5);
+                box-shadow:
+                0px 5px 5px rgba(000,000,000,0.1),
+                inset 0px 1px 0px rgba(255,255,255,0.5);
+                text-shadow:
+                0px 1px 3px rgba(000,000,000,0.3),
+                0px 0px 0px rgba(255,255,255,0);
+                display: table;
+                position: static;
+                clear: both;
+                }
+                
+                #duprssForm .inputs #submit:hover {
+                background: -moz-linear-gradient(
+                top,
+                #a4b0cb 0%,
+                #b9c5dd);
+                background: -webkit-gradient(
+                linear, left top, left bottom, 
+                from(#a4b0cb),
+                to(#b9c5dd));
+                }"""
+            print "</style>"
+            print """<script src="http://ajax.googleapis.com/ajax/libs/jquery/1.9.0/jquery.min.js"></script>"""
+            print "<script>"
+            print """
+                $(document).ready(function(){
+                    var canSubmit = false
+                    $("#rssUrl").on('input paste propertychange hover', checkUrl);
+                    $("#check").on('click', checkUrl);
+                    $("#submit").css('display', 'none');
+                    
+                    function checkUrl() {
+                        $.ajax({
+                            type: "POST",
+                            url: "/DupRSS.cgi",
+                            data: {rssUrl: $("#rssUrl").val(), submitted: 'validate'},
+                            datatype: 'json',
+                            success: function(response){
+                                if (response.success) {
+                                    $("#rssUrl").css('background-image', "url(/check.png)")
+                                    $("body").on("click", "#submit", subUrl);
+                                    $("#submit").css("display", "block");
+                                } else {
+                                    $("#rssUrl").css('background-image', "url(/x.png)")
+                                    $("body").off("click", "#submit", subUrl);
+                                    $("#submit").css("display", "none");
+                                }
+                            }
+                        });
+                    }
+                    
+                    function subUrl() {
+                        $.ajax({
+                            type: "POST",
+                            url: "/DupRSS.cgi",
+                            data: {rssUrl: $("#rssUrl").val(), submitted: 'submitted'},
+                            datatype: 'json',
+                            success: function(response){
+                                $(".inputs").html("<div class='header'>" +
+                                "<h3>Your feed has been successfully mirrored!</h3>" +
+                                "</div>" +
+                                "<div class='sep'></div><br />" +
+                                response.message);
+                                },
+                            error: function(xhr,err, status, response)
+                            {
+                                alert("Something went wrong! See admin for details.")
+                            }
+                        });
+                    }
+                    
+                    $(function() {
+                    
+                    $("form").bind("keypress", function(e) {
+                    if (e.keyCode == 13) return false;
+                    });
+                    
+                    });
+                });
+                """
+            print "</script>"
+            print "</head>"
+            print "<body>"
+            formHtml = getFormHtml()
+            print formHtml
+            print "</body>"
+            print "</html>"
 main()
