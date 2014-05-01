@@ -177,7 +177,7 @@ def grabImageTags(rssText):
         try:
             origUrl = currImage.url.contents[0]
             origUrl.replaceWith(urljoin(rssUrl, unicode(origUrl)))
-            imgBase = re.sub(r'\W+', '', ntpath.basename(origUrl))
+            imgBase = re.sub(r'[^a-zA-Z0-9\.]', '', ntpath.basename(origUrl))
             newImgLoc = "/images/" + imgBase
             
             # ONLY download the image if the image DOESN'T exist.
@@ -202,7 +202,7 @@ def grabImageTags(rssText):
             try:
                 rand = getRand()
                 currImage['src'] = urljoin(rssUrl, currImage['src'])
-                imgBase = re.sub(r'\W+', '', ntpath.basename(currImage['src']))
+                imgBase = re.sub(r'[^a-zA-Z0-9\.]', '', ntpath.basename(currImage['src']))
                 newImgLoc = "/images/" + rand + "_" + imgBase
                 imgFile = drBucket.new_key(localDirLoc + newImgLoc)
                 try:
@@ -301,7 +301,7 @@ def updateVids():
     
     for currVid in allVideos:
         print "transferring: " + currVid
-        currKey = drBucket.new_key("/videos/" + re.sub(r'\W+', '', ntpath.basename(currVid)))
+        currKey = drBucket.new_key("/videos/" + re.sub(r'[^a-zA-Z0-9\.]', '', ntpath.basename(currVid)))
         currKey.set_contents_from_filename(currVid)
         currKey.set_acl('public-read')
         os.remove(currVid)
@@ -325,9 +325,13 @@ def getVids(itemContent):
     for currVid in range(0, len(youtubeVids)):
        currVid = ''.join(youtubeVids[currVid])
        vidBase = ntpath.basename(currVid)
-       vidBase = re.sub(r'\W+', '', vidBase)
+       vidBase = re.sub(r'[^a-zA-Z0-9\.]', '', vidBase)
        newVidLoc = vidBase + '.mp4'
        newVidAbs = serverDir + "/videos/" + newVidLoc
+       #newVidHTML = ("<video width='320' height='240' controls>" + \
+       #"<source src='" + newVidAbs + "' type='video/mp4'>" + \
+       #"Your browser does not support the video tag." + \
+       #"</video>")
        itemContent = itemContent.replace(currVid, newVidAbs)
        
        # Open a subprocess to download videos server-side and allow program
@@ -364,7 +368,7 @@ def getImgs(itemContent):
             try:
                 rand = getRand()
                 currImg['src'] = urljoin(rssUrl, currImg['src'])
-                imgBase = re.sub(r'\W+', '', ntpath.basename(currImg['src']))
+                imgBase = re.sub(r'[^a-zA-Z0-9\.]', '', ntpath.basename(currImg['src']))
                 newImgLoc = "/images/" + rand + "_" + imgBase
                 imgFile = drBucket.new_key(localDirLoc + newImgLoc)
                 try:
@@ -385,6 +389,7 @@ def getImgs(itemContent):
         itemDesc = itemDesc.replace("<description>", "")
         itemDesc = itemDesc.replace("</description>", "")
         itemContent.description.contents[0].replaceWith(itemDesc)
+
     try:
         itemConTag = itemContent.encoded.encode('utf-8').strip()
         itemConTag = BeautifulSoup(htmlParser.unescape(itemConTag),
@@ -394,7 +399,7 @@ def getImgs(itemContent):
             try:
                 rand = getRand()
                 currImg['src'] = urljoin(rssUrl, currImg['src'])
-                imgBase = re.sub(r'\W+', '', ntpath.basename(currImg['src']))
+                imgBase = re.sub(r'[^a-zA-Z0-9\.]', '', ntpath.basename(currImg['src']))
                 newImgLoc = "/images/" + rand + "_" + imgBase
                 imgFile = drBucket.new_key(localDirLoc + newImgLoc)
                 try:
@@ -413,6 +418,8 @@ def getImgs(itemContent):
 
         # Update item description
         itemConTag = htmlParser.unescape(str(itemConTag))
+        itemConTag = itemDesc.replace("&lt;encoded&gt;", "")
+        itemConTag = itemDesc.replace("&lt;/encoded&gt;", "")
         itemContent.encoded.contents[0].replaceWith(itemConTag)
     except:
         pass
@@ -422,7 +429,7 @@ def getImgs(itemContent):
         try:
             rand = getRand()
             currImg['url'] = urljoin(rssUrl, currImg['url'])
-            imgBase = re.sub(r'\W+', '', ntpath.basename(currImg['url']))
+            imgBase = re.sub(r'[^a-zA-Z0-9\.]', '', ntpath.basename(currImg['url']))
             newImgLoc = "/images/" + rand + "_" + imgBase
             imgFile = drBucket.new_key(localDirLoc + newImgLoc)
             try:
@@ -444,7 +451,7 @@ def getImgs(itemContent):
         try:
             rand = getRand()
             currImg['url'] = urljoin(rssUrl, currImg['url'])
-            imgBase = re.sub(r'\W+', '', ntpath.basename(currImg['url']))
+            imgBase = re.sub(r'[^a-zA-Z0-9\.]', '', ntpath.basename(currImg['url']))
             newImgLoc = "/images/" + rand + "_" + imgBase
             imgFile = drBucket.new_key(localDirLoc + newImgLoc)
             try:
@@ -476,7 +483,7 @@ def writeRss():
     feeds = dbConn.fetchall()
     feedTxt = str(feeds[0][0])
     # Select all Feed items pertaining to the URL
-    sql = """SELECT Item_xml FROM Items_DupRSS WHERE Item_feed = %s"""
+    sql = """SELECT Item_xml FROM Items_DupRSS WHERE Item_feed = %s ORDER BY item_date DESC"""
     dbConn.execute(sql, (feedId,))
     feeds = dbConn.fetchall()
     
