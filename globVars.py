@@ -7,3 +7,4 @@ videosDir = "/Users/kyleboss/Dropbox/DupRSS/videos" # The temporary directory wh
 s3PublicKey = "" # Public Key to s3
 s3PrivateKey = "" # Private Key to s3
 s3Bucket = "duprss" # s3 Bucket
+errorLoc = "/Users/kyleboss/Dropbox/DupRSS/errorLog.txt" # File where errors will be output. Make sure it has proper privileges.
