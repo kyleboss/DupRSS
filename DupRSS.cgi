@@ -146,7 +146,7 @@ def insertFeed():
     
     except:
         print "Something went wrong while inserting the feed"
-        f = open('errLog.txt','w')
+        f = open(errorLoc,'w')
         f.write("Something went wrong while inserting the feed") # python will convert \n to os.linesep
         f.close() # you can omit in most cases as the destructor will call if
     return feedId
@@ -175,7 +175,7 @@ def updateFoundFeed(feeds):
             insertFeed()
             return False
     except:
-        f = open('errLog.txt','w')
+        f = open(errorLoc,'w')
         f.write("Something went wrong while updating the feed!") # python will convert \n to os.linesep
         f.close() # you can omit in most cases as the destructor will call if
 
