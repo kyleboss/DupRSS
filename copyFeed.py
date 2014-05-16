@@ -297,6 +297,12 @@ def parseFeed():
     return True
 
 def updateVids():
+    """
+        updateVids moves all the videos in the local videos directory
+        to s3.
+        PARAMS: NONE
+        RETURN: NONE
+    """
     allVideos = glob.glob(videosDir + "/*.mp4")
     
     for currVid in allVideos:
