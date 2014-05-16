@@ -574,8 +574,6 @@ def getAllFeeds():
                          stdin=open("/dev/null", "r"),
                          stdout=open("/dev/null", "w"),
                          stderr=open(errorLoc, "w"), shell=True)
-        #if(parseFeed()):
-        #writeRss()
 
 def main():
     global rssUrl
