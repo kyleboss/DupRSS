@@ -38,6 +38,11 @@ def connectToDB():
         print "Could not connect to database: " + e
 
 def validateUrl():
+    """
+        validateUrl ensures that the URL is properly formatted (and exists).
+        PARAMS: NONE
+        RETURN: True if the URL is valid.
+    """
     global rssUrl
     valUrl = rssUrl
     try:
@@ -120,6 +125,11 @@ def checkFeed():
         print "Something went wrong when checking if feed exists"
 
 def insertFeed():
+    """
+        insertFeed() puts the feed into the database 
+        PARAMS: NONE
+        RETURN: The feed's ID number
+    """
     global feedId, localDirLoc
     
     try:
@@ -133,9 +143,6 @@ def insertFeed():
         rssFile.set_contents_from_string('NO RSS FOUND')
         rssFile.set_acl('public-read');
         db.commit()
-        f = open('errLog.txt','w')
-        f.write("I FINISHED INSERTING FEED") # python will convert \n to os.linesep
-        f.close() # you can omit in most cases as the destructor will call if
     
     except:
         print "Something went wrong while inserting the feed"
@@ -145,6 +152,13 @@ def insertFeed():
     return feedId
 
 def updateFoundFeed(feeds):
+    """
+        updateFoundFeed() deletes the feed from the MySQL database if it does not
+        exist in S3. If it does exist in S3, it updates the files in the bucket.
+        PARAMS: feeds -- the feed object from MySQL
+        RETURN: The feedId if it exists in S3 or False if the feed object
+        does not exist in S3.
+    """
     global feedId, localDirLoc
     feedId = feeds[0][0]
     localDirLoc = "/feeds/" + feeds[0][1]
@@ -161,12 +175,16 @@ def updateFoundFeed(feeds):
             insertFeed()
             return False
     except:
-        print "Something went wrong while updating the feed!"
         f = open('errLog.txt','w')
         f.write("Something went wrong while updating the feed!") # python will convert \n to os.linesep
         f.close() # you can omit in most cases as the destructor will call if
 
 def getRand():
+    """
+        getRand() generates a pseudo-random string.
+        PARAMS: NONE
+        RETURN: A pseudo-random string.
+    """
     return "%s" % (md5(str(localtime())).hexdigest())
 
 
